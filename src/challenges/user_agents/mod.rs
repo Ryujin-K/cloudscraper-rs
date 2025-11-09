@@ -37,7 +37,7 @@ struct HeaderProfile {
     accept_encoding: String,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 enum DeviceKind {
     Desktop,
@@ -117,6 +117,17 @@ pub fn get_user_agent_profile(opts: UserAgentOptions) -> Result<UserAgentProfile
     manager.select_profile(opts)
 }
 
+fn permitted_device_kinds(opts: &UserAgentOptions) -> Vec<DeviceKind> {
+    let mut kinds = Vec::new();
+    if opts.desktop {
+        kinds.push(DeviceKind::Desktop);
+    }
+    if opts.mobile {
+        kinds.push(DeviceKind::Mobile);
+    }
+    kinds
+}
+
 impl UserAgentManager {
     fn select_profile(&self, opts: UserAgentOptions) -> Result<UserAgentProfile, UserAgentError> {
         if !opts.desktop && !opts.mobile {
@@ -129,38 +140,11 @@ impl UserAgentManager {
             return self.custom_profile(custom);
         }
 
-        let platform = match opts.platform {
-            Some(ref platform) => {
-                static VALID: &[&str] = &["linux", "windows", "darwin", "android", "ios"];
-                if !VALID.contains(&platform.as_str()) {
-                    return Err(UserAgentError::InvalidOptions(
-                        format!("Invalid platform '{platform}'; valid: {}", VALID.join(", "))
-                            .into(),
-                    ));
-                }
-                platform.clone()
-            }
-            None => random_choice(&["linux", "windows", "darwin", "android", "ios"]).to_string(),
-        };
+        let permitted_kinds = permitted_device_kinds(&opts);
 
-        let mut permitted_kinds = Vec::new();
-        if opts.desktop {
-            permitted_kinds.push(DeviceKind::Desktop);
-        }
-        if opts.mobile {
-            permitted_kinds.push(DeviceKind::Mobile);
-        }
+        let platform = self.resolve_platform(&opts, &permitted_kinds)?;
 
-        let mut filtered = HashMap::new();
-        for device_kind in permitted_kinds {
-            if let Some(device_map) = self.data.user_agents.get(&device_kind)
-                && let Some(platform_map) = device_map.get(&platform)
-            {
-                for (browser, agents) in platform_map {
-                    filtered.insert(browser.clone(), agents.clone());
-                }
-            }
-        }
+        let filtered = self.collect_profiles(&permitted_kinds, &platform);
 
         if filtered.is_empty() {
             return Err(UserAgentError::ProfileNotFound);
@@ -176,7 +160,10 @@ impl UserAgentManager {
                 }
                 browser
             }
-            None => random_choice(Vec::from_iter(filtered.keys().cloned()).as_slice()),
+            None => {
+                let browsers: Vec<String> = filtered.keys().cloned().collect();
+                random_choice(&browsers)
+            }
         };
 
         let agents = filtered
@@ -251,6 +238,80 @@ impl UserAgentManager {
             }
         }
         None
+    }
+
+    fn resolve_platform(
+        &self,
+        opts: &UserAgentOptions,
+        permitted_kinds: &[DeviceKind],
+    ) -> Result<String, UserAgentError> {
+        const VALID: &[&str] = &["linux", "windows", "darwin", "android", "ios"];
+
+        match opts.platform {
+            Some(ref platform) => {
+                if !VALID.contains(&platform.as_str()) {
+                    return Err(UserAgentError::InvalidOptions(
+                        format!("Invalid platform '{platform}'; valid: {}", VALID.join(", "))
+                            .into(),
+                    ));
+                }
+                if !self.platform_available(permitted_kinds, platform) {
+                    return Err(UserAgentError::ProfileNotFound);
+                }
+                Ok(platform.clone())
+            }
+            None => {
+                let candidates: Vec<&str> = VALID
+                    .iter()
+                    .copied()
+                    .filter(|platform| self.platform_available(permitted_kinds, platform))
+                    .collect();
+
+                if candidates.is_empty() {
+                    return Err(UserAgentError::ProfileNotFound);
+                }
+
+                Ok(random_choice(&candidates).to_string())
+            }
+        }
+    }
+
+    fn collect_profiles(
+        &self,
+        permitted_kinds: &[DeviceKind],
+        platform: &str,
+    ) -> HashMap<String, Vec<String>> {
+        let mut filtered = HashMap::new();
+
+        for device_kind in permitted_kinds {
+            if let Some(device_map) = self.data.user_agents.get(device_kind)
+                && let Some(platform_map) = device_map.get(platform)
+            {
+                for (browser, agents) in platform_map {
+                    if agents.is_empty() {
+                        continue;
+                    }
+
+                    filtered
+                        .entry(browser.clone())
+                        .or_insert_with(Vec::new)
+                        .extend(agents.iter().cloned());
+                }
+            }
+        }
+
+        filtered
+    }
+
+    fn platform_available(&self, permitted_kinds: &[DeviceKind], platform: &str) -> bool {
+        permitted_kinds.iter().any(|kind| {
+            self.data
+                .user_agents
+                .get(kind)
+                .and_then(|device_map| device_map.get(platform))
+                .map(|platform_map| platform_map.values().any(|agents| !agents.is_empty()))
+                .unwrap_or(false)
+        })
     }
 }
 
