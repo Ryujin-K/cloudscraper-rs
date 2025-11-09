@@ -115,11 +115,7 @@ impl DomainAccumulator {
         }
         let mut samples: Vec<_> = self.latencies.iter().cloned().collect();
         samples.sort_unstable();
-        let avg = samples
-            .iter()
-            .map(|d| d.as_secs_f64())
-            .sum::<f64>()
-            / samples.len() as f64;
+        let avg = samples.iter().map(|d| d.as_secs_f64()).sum::<f64>() / samples.len() as f64;
         let p95_index = ((samples.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
         let p95 = samples[p95_index];
         (Some(Duration::from_secs_f64(avg)), Some(p95))

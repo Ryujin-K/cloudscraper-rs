@@ -128,9 +128,7 @@ impl DefaultAntiDetection {
     }
 
     fn state_mut(&mut self, domain: &str) -> &mut DomainAntiDetection {
-        self.per_domain
-            .entry(domain.to_string())
-            .or_default()
+        self.per_domain.entry(domain.to_string()).or_default()
     }
 
     fn prune_old_requests(state: &mut DomainAntiDetection, window: Duration) {
@@ -146,7 +144,8 @@ impl DefaultAntiDetection {
         ctx: &mut AntiDetectionContext,
     ) {
         Self::prune_old_requests(state, config.burst_window);
-        if state.recent_requests.len() > config.max_requests_per_window && ctx.delay_hint.is_none() {
+        if state.recent_requests.len() > config.max_requests_per_window && ctx.delay_hint.is_none()
+        {
             ctx.delay_hint = Some(config.cooldown);
         }
     }
@@ -192,7 +191,8 @@ impl DefaultAntiDetection {
 
         if let Some(agent) = &ctx.user_agent {
             let name = HeaderName::from_static("user-agent");
-            let value = HeaderValue::from_str(agent).unwrap_or_else(|_| HeaderValue::from_static("Mozilla/5.0"));
+            let value = HeaderValue::from_str(agent)
+                .unwrap_or_else(|_| HeaderValue::from_static("Mozilla/5.0"));
             ctx.headers.insert(name, value);
         }
     }
@@ -213,11 +213,8 @@ impl DefaultAntiDetection {
                 .collect();
             let name = format!("x-cf-client-{}", token);
             if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes())
-                && let Ok(header_value) = HeaderValue::from_str(&format!(
-                    "{}-{}",
-                    rng.r#gen::<u32>(),
-                    ctx.body_size
-                ))
+                && let Ok(header_value) =
+                    HeaderValue::from_str(&format!("{}-{}", rng.r#gen::<u32>(), ctx.body_size))
             {
                 ctx.headers.insert(header_name, header_value);
             }

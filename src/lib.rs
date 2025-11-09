@@ -37,118 +37,51 @@ pub mod external_deps;
 pub mod modules;
 
 pub use crate::cloudscraper::{
-    CloudScraper,
-    CloudScraperBuilder,
-    CloudScraperConfig,
-    CloudScraperError,
-    CloudScraperResult,
+    CloudScraper, CloudScraperBuilder, CloudScraperConfig, CloudScraperError, CloudScraperResult,
     ScraperResponse,
 };
 
 pub use crate::challenges::core::{
-    ChallengeExecutionError,
-    ChallengeHttpClient,
-    ChallengeHttpClientError,
-    ChallengeHttpResponse,
-    ChallengeResponse,
-    ChallengeSubmission,
-    OriginalRequest,
-    ReqwestChallengeHttpClient,
+    ChallengeExecutionError, ChallengeHttpClient, ChallengeHttpClientError, ChallengeHttpResponse,
+    ChallengeResponse, ChallengeSubmission, OriginalRequest, ReqwestChallengeHttpClient,
     execute_challenge_submission,
 };
 
 pub use crate::challenges::detectors::{
-    ChallengeDetection,
-    ChallengeDetector,
-    ChallengeType,
-    ResponseStrategy,
+    ChallengeDetection, ChallengeDetector, ChallengeType, ResponseStrategy,
 };
 
 pub use crate::challenges::pipeline::{
-    ChallengePipeline,
-    ChallengePipelineResult,
-    PipelineContext,
-    PipelineError,
-    UnsupportedReason,
+    ChallengePipeline, ChallengePipelineResult, PipelineContext, PipelineError, UnsupportedReason,
 };
 
 pub use crate::challenges::solvers::{
-    FailureRecorder,
-    FingerprintManager,
-    MitigationPlan,
-    TlsProfileManager,
+    FailureRecorder, FingerprintManager, MitigationPlan, TlsProfileManager,
 };
 
 pub use crate::challenges::user_agents::{
-    UserAgentError,
-    UserAgentOptions,
-    UserAgentProfile,
-    get_user_agent_profile,
+    UserAgentError, UserAgentOptions, UserAgentProfile, get_user_agent_profile,
 };
 
 pub use crate::external_deps::captcha::{
-    AntiCaptchaProvider,
-    CapSolverProvider,
-    CaptchaConfig,
-    CaptchaError,
-    CaptchaProvider,
-    CaptchaResult,
-    CaptchaSolution,
-    CaptchaTask,
-    TwoCaptchaProvider,
+    AntiCaptchaProvider, CapSolverProvider, CaptchaConfig, CaptchaError, CaptchaProvider,
+    CaptchaResult, CaptchaSolution, CaptchaTask, TwoCaptchaProvider,
 };
 
 pub use crate::external_deps::interpreters::{
-    BoaJavascriptInterpreter,
-    InterpreterError,
-    InterpreterResult,
-    JavascriptInterpreter,
+    BoaJavascriptInterpreter, InterpreterError, InterpreterResult, JavascriptInterpreter,
 };
 
 pub use crate::modules::{
-    AdaptiveTimingStrategy,
-    AntiDetectionContext,
-    AntiDetectionStrategy,
-    BehaviorProfile,
-    BrowserFingerprint,
-    BrowserProfile,
-    BrowserType,
-    ChallengeEvent,
-    ConsistencyLevel,
-    DefaultAdaptiveTiming,
-    DefaultAntiDetection,
-    DefaultTLSManager,
-    DomainState,
-    DomainStats,
-    DomainTimingSnapshot,
-    EventDispatcher,
-    EventHandler,
-    ErrorEvent,
-    FeatureVector,
-    FingerprintGenerator,
-    GlobalStats,
-    LoggingHandler,
-    MetricsCollector,
-    MetricsHandler,
-    MetricsSnapshot,
-    MLOptimizer,
-    PerformanceConfig,
-    PerformanceMonitor,
-    PerformanceReport,
-    PostResponseEvent,
-    PreRequestEvent,
-    ProxyConfig,
-    ProxyHealthReport,
-    ProxyManager,
-    RequestKind,
-    RetryEvent,
-    RotationStrategy,
-    ScraperEvent,
-    StateManager,
-    StrategyRecommendation,
-    TimingOutcome,
-    TimingRequest,
-    TLSConfig,
+    AdaptiveTimingStrategy, AntiDetectionContext, AntiDetectionStrategy, BehaviorProfile,
+    BrowserFingerprint, BrowserProfile, BrowserType, ChallengeEvent, ConsistencyLevel,
+    DefaultAdaptiveTiming, DefaultAntiDetection, DefaultTLSManager, DomainState, DomainStats,
+    DomainTimingSnapshot, ErrorEvent, EventDispatcher, EventHandler, FeatureVector,
+    FingerprintGenerator, GlobalStats, LoggingHandler, MLOptimizer, MetricsCollector,
+    MetricsHandler, MetricsSnapshot, PerformanceConfig, PerformanceMonitor, PerformanceReport,
+    PostResponseEvent, PreRequestEvent, ProxyConfig, ProxyHealthReport, ProxyManager, RequestKind,
+    RetryEvent, RotationStrategy, ScraperEvent, StateManager, StrategyRecommendation, TLSConfig,
+    TimingOutcome, TimingRequest,
 };
 
 /// Library version

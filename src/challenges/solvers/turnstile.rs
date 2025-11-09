@@ -135,9 +135,7 @@ impl TurnstileSolver {
         headers.insert("Origin".into(), origin_from_url(response.url));
 
         let wait = self.random_delay();
-        payload
-            .entry("cf-turnstile-response".into())
-            .or_default();
+        payload.entry("cf-turnstile-response".into()).or_default();
 
         Ok(ChallengeSubmission::new(
             http::Method::POST,

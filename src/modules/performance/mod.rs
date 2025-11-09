@@ -78,11 +78,7 @@ impl DomainPerformance {
         if self.latencies.is_empty() {
             return None;
         }
-        let total = self
-            .latencies
-            .iter()
-            .map(|d| d.as_secs_f64())
-            .sum::<f64>();
+        let total = self.latencies.iter().map(|d| d.as_secs_f64()).sum::<f64>();
         Some(Duration::from_secs_f64(total / self.latencies.len() as f64))
     }
 
@@ -119,7 +115,12 @@ impl PerformanceMonitor {
     }
 
     /// Record a latency measurement and return an optional alert report.
-    pub fn record(&mut self, domain: &str, latency: Duration, success: bool) -> Option<PerformanceReport> {
+    pub fn record(
+        &mut self,
+        domain: &str,
+        latency: Duration,
+        success: bool,
+    ) -> Option<PerformanceReport> {
         if self.global_latencies.len() == self.config.window {
             self.global_latencies.pop_front();
         }
@@ -141,17 +142,13 @@ impl PerformanceMonitor {
             if let Some(avg) = perf.average_latency()
                 && avg > self.config.latency_threshold
             {
-                report
-                    .slow_domains
-                    .push((domain_name.clone(), avg));
+                report.slow_domains.push((domain_name.clone(), avg));
             }
 
             if let Some(error_rate) = perf.error_rate()
                 && error_rate >= self.config.error_rate_threshold
             {
-                report
-                    .error_domains
-                    .push((domain_name.clone(), error_rate));
+                report.error_domains.push((domain_name.clone(), error_rate));
             }
         }
 
@@ -211,7 +208,9 @@ impl PerformanceMonitor {
             .iter()
             .map(|d| d.as_secs_f64())
             .sum::<f64>();
-        Some(Duration::from_secs_f64(total / self.global_latencies.len() as f64))
+        Some(Duration::from_secs_f64(
+            total / self.global_latencies.len() as f64,
+        ))
     }
 }
 

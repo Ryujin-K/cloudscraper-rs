@@ -109,7 +109,8 @@ impl MLOptimizer {
             delay_used,
         });
 
-        model.success_rate = (1.0 - alpha) * model.success_rate + alpha * if success { 1.0 } else { 0.0 };
+        model.success_rate =
+            (1.0 - alpha) * model.success_rate + alpha * if success { 1.0 } else { 0.0 };
 
         // Recalculate weights via simple correlation (success minus failure averages).
         let mut success_sums: HashMap<String, f64> = HashMap::new();
@@ -191,7 +192,13 @@ impl MLOptimizer {
         let mut successful_delays: Vec<f64> = model
             .attempts
             .iter()
-            .filter_map(|attempt| if attempt.success { attempt.delay_used } else { None })
+            .filter_map(|attempt| {
+                if attempt.success {
+                    attempt.delay_used
+                } else {
+                    None
+                }
+            })
             .collect();
         if successful_delays.is_empty() {
             return None;
@@ -230,6 +237,6 @@ mod tests {
         let recommendation = optimizer.recommend("example.com");
         assert!(recommendation.is_some());
         let rec = recommendation.unwrap();
-        assert!(rec.feature_weights.get("timing").is_some());
+        assert!(rec.feature_weights.contains_key("timing"));
     }
 }

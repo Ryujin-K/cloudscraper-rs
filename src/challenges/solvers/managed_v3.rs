@@ -528,6 +528,6 @@ mod tests {
         let fixture = ResponseFixture::new(&html, 403);
         let solver = ManagedV3Solver::new(Arc::new(StubInterpreter));
         let submission = solver.solve(&fixture.response()).expect("fallback works");
-        assert!(submission.form_fields.get("jschl_answer").is_some());
+        assert!(submission.form_fields.contains_key("jschl_answer"));
     }
 }

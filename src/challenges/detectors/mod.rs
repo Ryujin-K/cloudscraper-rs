@@ -419,7 +419,7 @@ impl ChallengeDetector {
             0.8,
             &raw_patterns,
         )
-    .into_adaptive();
+        .into_adaptive();
 
         self.adaptive_patterns
             .entry(domain.to_lowercase())

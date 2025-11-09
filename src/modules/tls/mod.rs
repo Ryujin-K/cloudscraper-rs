@@ -3,8 +3,8 @@
 //! Supplies browser TLS profiles plus per-domain rotation to vary JA3
 //! fingerprints and cipher suites.
 
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use std::collections::HashMap;
 
 use super::spoofing::BrowserType;

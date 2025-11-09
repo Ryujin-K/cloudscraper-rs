@@ -68,7 +68,10 @@ pub struct TimingRequest {
 
 impl TimingRequest {
     pub fn new(kind: RequestKind, content_length: usize) -> Self {
-        Self { kind, content_length }
+        Self {
+            kind,
+            content_length,
+        }
     }
 }
 
@@ -229,9 +232,7 @@ impl DefaultAdaptiveTiming {
     }
 
     fn ensure_domain_state(&mut self, domain: &str) -> &mut DomainTimingState {
-        self.domain_state
-            .entry(domain.to_string())
-            .or_default()
+        self.domain_state.entry(domain.to_string()).or_default()
     }
 
     fn apply_human_jitter(mut delay: f32, profile: TimingProfile, content_length: usize) -> f32 {
@@ -302,7 +303,7 @@ impl AdaptiveTimingStrategy for DefaultAdaptiveTiming {
         let response_factor = state.average_response_time.clamp(0.6, 1.5);
         delay *= response_factor;
 
-    delay = Self::apply_human_jitter(delay, profile, request.content_length);
+        delay = Self::apply_human_jitter(delay, profile, request.content_length);
 
         let circadian = Self::circadian_multiplier().max(0.2);
         delay /= circadian;
@@ -340,12 +341,14 @@ impl AdaptiveTimingStrategy for DefaultAdaptiveTiming {
         }
 
         let response_time = outcome.response_time.as_secs_f32().min(30.0);
-        state.average_response_time = (1.0 - alpha) * state.average_response_time + alpha * response_time;
+        state.average_response_time =
+            (1.0 - alpha) * state.average_response_time + alpha * response_time;
 
         if state.recent_delays.len() == 32 {
             state.recent_delays.pop_front();
         }
-        state.recent_delays
+        state
+            .recent_delays
             .push_back(outcome.applied_delay.as_secs_f32().min(10.0));
 
         if self.global_history.len() == 256 {
@@ -355,12 +358,14 @@ impl AdaptiveTimingStrategy for DefaultAdaptiveTiming {
     }
 
     fn snapshot(&self, domain: &str) -> Option<DomainTimingSnapshot> {
-        self.domain_state.get(domain).map(|state| DomainTimingSnapshot {
-            success_rate: state.success_rate,
-            consecutive_failures: state.consecutive_failures,
-            average_response_time: Duration::from_secs_f32(state.average_response_time),
-            optimal_timing: state.optimal_timing.map(Duration::from_secs_f32),
-        })
+        self.domain_state
+            .get(domain)
+            .map(|state| DomainTimingSnapshot {
+                success_rate: state.success_rate,
+                consecutive_failures: state.consecutive_failures,
+                average_response_time: Duration::from_secs_f32(state.average_response_time),
+                optimal_timing: state.optimal_timing.map(Duration::from_secs_f32),
+            })
     }
 }
 

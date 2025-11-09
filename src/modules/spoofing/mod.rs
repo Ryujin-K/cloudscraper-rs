@@ -4,7 +4,7 @@
 //! present stable client identities when required.
 
 use chrono::{DateTime, Utc};
-use rand::{seq::SliceRandom, Rng};
+use rand::{Rng, seq::SliceRandom};
 use std::collections::HashMap;
 
 use crate::challenges::solvers::FingerprintManager;

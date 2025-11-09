@@ -4,32 +4,13 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use cloudscraper_rs::{
-    CloudScraper,
-    UserAgentOptions,
-    VERSION,
+    CloudScraper, UserAgentOptions, VERSION,
     modules::{
-        AntiDetectionConfig,
-        AntiDetectionContext,
-    AntiDetectionStrategy,
-        BehaviorProfile,
-        BrowserType,
-        ConsistencyLevel,
-        DefaultAdaptiveTiming,
-        DefaultAntiDetection,
-        DefaultTLSManager,
-        FeatureVector,
-        MLConfig,
-        MLOptimizer,
-        ProxyConfig,
-        ProxyManager,
-        RequestKind,
-        RotationStrategy,
-    AdaptiveTimingStrategy,
-        StateManager,
-        StrategyRecommendation,
-        TLSConfig,
-        TimingOutcome,
-        TimingRequest,
+        AdaptiveTimingStrategy, AntiDetectionConfig, AntiDetectionContext, AntiDetectionStrategy,
+        BehaviorProfile, BrowserType, ConsistencyLevel, DefaultAdaptiveTiming,
+        DefaultAntiDetection, DefaultTLSManager, FeatureVector, MLConfig, MLOptimizer, ProxyConfig,
+        ProxyManager, RequestKind, RotationStrategy, StateManager, StrategyRecommendation,
+        TLSConfig, TimingOutcome, TimingRequest,
     },
 };
 use http::Method;
@@ -53,7 +34,12 @@ fn parse_bool(input: &str, default: bool) -> bool {
 }
 
 fn parse_usize(input: &str, default: usize) -> usize {
-    input.trim().parse().ok().filter(|value| *value > 0).unwrap_or(default)
+    input
+        .trim()
+        .parse()
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
 }
 
 #[test]
@@ -69,7 +55,10 @@ fn interactive_full_stack() -> Result<(), Box<dyn Error>> {
         url_input
     };
 
-    let domain = Url::parse(&target_url)?.host_str().unwrap_or("example.com").to_string();
+    let domain = Url::parse(&target_url)?
+        .host_str()
+        .unwrap_or("example.com")
+        .to_string();
 
     let mobile_answer = prompt("Use mobile user-agent? (y/N):")?;
     let brotli_answer = prompt("Allow Brotli encoding? (y/N):")?;
@@ -184,10 +173,7 @@ fn exercise_supporting_modules(domain: &str) -> Result<(), Box<dyn Error>> {
         failure_threshold: 1,
         cooldown: Duration::from_secs(20),
     });
-    proxy_manager.load([
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:9090",
-    ]);
+    proxy_manager.load(["http://127.0.0.1:8080", "http://127.0.0.1:9090"]);
     if let Some(proxy) = proxy_manager.next_proxy() {
         proxy_manager.report_failure(&proxy);
     }
@@ -218,10 +204,8 @@ fn exercise_supporting_modules(domain: &str) -> Result<(), Box<dyn Error>> {
     }
 
     let mut anti_detection = DefaultAntiDetection::new(AntiDetectionConfig::default());
-    let mut ctx = AntiDetectionContext::new(
-        Url::parse(&format!("https://{}", domain))?,
-        Method::GET,
-    );
+    let mut ctx =
+        AntiDetectionContext::new(Url::parse(&format!("https://{}", domain))?, Method::GET);
     ctx.set_body_size(512);
     ctx.set_user_agent("InteractiveTest/1.0");
     anti_detection.prepare_request(domain, &mut ctx);
@@ -260,8 +244,11 @@ fn exercise_supporting_modules(domain: &str) -> Result<(), Box<dyn Error>> {
     features.insert("latency_ms".into(), 320.0);
     features.insert("challenge_score".into(), 0.8);
     optimizer.record_attempt(domain, features, true, Some(1.1));
-    if let Some(StrategyRecommendation { confidence, suggested_delay, .. }) =
-        optimizer.recommend(domain)
+    if let Some(StrategyRecommendation {
+        confidence,
+        suggested_delay,
+        ..
+    }) = optimizer.recommend(domain)
     {
         println!(
             "ML recommendation -> confidence: {:.2}, delay: {:?}",

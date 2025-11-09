@@ -505,4 +505,3 @@ mod tests {
         assert!(state.recent_errors.is_empty());
     }
 }
-

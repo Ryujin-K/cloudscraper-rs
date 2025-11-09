@@ -249,7 +249,7 @@ mod tests {
             headers,
             body: vec![],
             url: Url::parse(url).unwrap(),
-            is_redirect: status >= 300 && status < 400,
+            is_redirect: (300..400).contains(&status),
         }
     }
 

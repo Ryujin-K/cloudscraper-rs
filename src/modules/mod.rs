@@ -5,43 +5,31 @@
 
 pub mod adaptive_timing;
 pub mod anti_detection;
+pub mod events;
 pub mod metrics;
 pub mod ml;
 pub mod performance;
-pub mod spoofing;
-pub mod tls;
-pub mod state;
-pub mod events;
 pub mod proxy;
+pub mod spoofing;
+pub mod state;
+pub mod tls;
 
 // Re-export commonly used types
 pub use adaptive_timing::{
-    AdaptiveTimingStrategy,
-    BehaviorProfile,
-    DefaultAdaptiveTiming,
-    DomainTimingSnapshot,
-    RequestKind,
-    TimingOutcome,
-    TimingProfile,
-    TimingRequest,
+    AdaptiveTimingStrategy, BehaviorProfile, DefaultAdaptiveTiming, DomainTimingSnapshot,
+    RequestKind, TimingOutcome, TimingProfile, TimingRequest,
 };
 pub use anti_detection::{
-    AntiDetectionConfig,
-    AntiDetectionContext,
-    AntiDetectionStrategy,
-    DefaultAntiDetection,
+    AntiDetectionConfig, AntiDetectionContext, AntiDetectionStrategy, DefaultAntiDetection,
+};
+pub use events::{
+    ChallengeEvent, ErrorEvent, EventDispatcher, EventHandler, LoggingHandler, MetricsHandler,
+    PostResponseEvent, PreRequestEvent, RetryEvent, ScraperEvent,
 };
 pub use metrics::{DomainStats, GlobalStats, MetricsCollector, MetricsSnapshot};
 pub use ml::{FeatureVector, MLConfig, MLOptimizer, StrategyRecommendation};
-pub use performance::{PerformanceMonitor, PerformanceConfig, PerformanceReport};
-pub use spoofing::{BrowserFingerprint, BrowserType, ConsistencyLevel, FingerprintGenerator};
-pub use tls::{BrowserProfile, DefaultTLSManager, TLSConfig};
-pub use state::{StateManager, DomainState};
-pub use events::{
-    EventDispatcher, EventHandler, ScraperEvent, PreRequestEvent, PostResponseEvent,
-    ChallengeEvent, ErrorEvent, RetryEvent, LoggingHandler, MetricsHandler,
-};
+pub use performance::{PerformanceConfig, PerformanceMonitor, PerformanceReport};
 pub use proxy::{ProxyConfig, ProxyHealthReport, ProxyManager, RotationStrategy};
-
-
-
+pub use spoofing::{BrowserFingerprint, BrowserType, ConsistencyLevel, FingerprintGenerator};
+pub use state::{DomainState, StateManager};
+pub use tls::{BrowserProfile, DefaultTLSManager, TLSConfig};

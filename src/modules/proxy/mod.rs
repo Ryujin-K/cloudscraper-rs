@@ -3,8 +3,8 @@
 //! Tracks proxy performance, bans unhealthy endpoints, and selects the next
 //! candidate based on the chosen rotation strategy.
 
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -119,11 +119,7 @@ impl ProxyManager {
 
     pub fn add_proxy(&mut self, proxy: impl Into<String>) {
         let endpoint = proxy.into();
-        if self
-            .proxies
-            .iter()
-            .any(|entry| entry.endpoint == endpoint)
-        {
+        if self.proxies.iter().any(|entry| entry.endpoint == endpoint) {
             return;
         }
         self.proxies.push(ProxyEntry {
@@ -173,10 +169,9 @@ impl ProxyManager {
                     self.current_index = (self.current_index + 1) % available_indices.len();
                     available_indices[idx_in_pool]
                 }
-                RotationStrategy::Random => available_indices
-                    .choose(&mut self.rng)
-                    .copied()
-                    .unwrap(),
+                RotationStrategy::Random => {
+                    available_indices.choose(&mut self.rng).copied().unwrap()
+                }
                 RotationStrategy::Smart => *available_indices
                     .iter()
                     .max_by(|&&a, &&b| {
@@ -185,12 +180,10 @@ impl ProxyManager {
                         lhs.partial_cmp(&rhs).unwrap_or(Ordering::Equal)
                     })
                     .unwrap(),
-                RotationStrategy::Weighted => weighted_choice_index(
-                    &mut self.rng,
-                    &self.proxies,
-                    &available_indices,
-                )
-                .unwrap_or(available_indices[0]),
+                RotationStrategy::Weighted => {
+                    weighted_choice_index(&mut self.rng, &self.proxies, &available_indices)
+                        .unwrap_or(available_indices[0])
+                }
                 RotationStrategy::RoundRobinSmart => {
                     let filtered: Vec<usize> = available_indices
                         .iter()
@@ -221,14 +214,22 @@ impl ProxyManager {
     }
 
     pub fn report_success(&mut self, proxy: &str) {
-        if let Some(entry) = self.proxies.iter_mut().find(|entry| entry.endpoint == proxy) {
+        if let Some(entry) = self
+            .proxies
+            .iter_mut()
+            .find(|entry| entry.endpoint == proxy)
+        {
             entry.stats.successes += 1;
             entry.banned_until = None;
         }
     }
 
     pub fn report_failure(&mut self, proxy: &str) {
-        if let Some(entry) = self.proxies.iter_mut().find(|entry| entry.endpoint == proxy) {
+        if let Some(entry) = self
+            .proxies
+            .iter_mut()
+            .find(|entry| entry.endpoint == proxy)
+        {
             entry.stats.failures += 1;
             entry.stats.last_failure = Some(Instant::now());
             if entry.stats.failures % self.config.failure_threshold as u64 == 0 {

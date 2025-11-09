@@ -77,7 +77,9 @@ pub struct EventDispatcher {
 
 impl EventDispatcher {
     pub fn new() -> Self {
-        Self { handlers: Vec::new() }
+        Self {
+            handlers: Vec::new(),
+        }
     }
 
     pub fn register_handler(&mut self, handler: Arc<dyn EventHandler>) {
@@ -111,7 +113,12 @@ impl EventHandler for LoggingHandler {
                 );
             }
             ScraperEvent::Challenge(challenge) => {
-                log::info!("challenge {} ({}) success={}", challenge.domain, challenge.challenge_type, challenge.success);
+                log::info!(
+                    "challenge {} ({}) success={}",
+                    challenge.domain,
+                    challenge.challenge_type,
+                    challenge.success
+                );
             }
             ScraperEvent::Error(error) => {
                 log::warn!("warning {} -> {}", error.domain, error.error);
@@ -144,8 +151,11 @@ impl EventHandler for MetricsHandler {
     fn handle(&self, event: &ScraperEvent) {
         match event {
             ScraperEvent::PostResponse(post) => {
-                self.metrics
-                    .record_response(post.url.host_str().unwrap_or(""), post.status, post.latency);
+                self.metrics.record_response(
+                    post.url.host_str().unwrap_or(""),
+                    post.status,
+                    post.latency,
+                );
             }
             ScraperEvent::Error(error) => {
                 self.metrics.record_error(&error.domain);

@@ -168,15 +168,11 @@ impl JavascriptV2Solver {
             .entry("cf_ch_verify".into())
             .or_insert_with(|| "plat".into());
         payload.entry("vc".into()).or_default();
-        payload
-            .entry("captcha_vc".into())
-            .or_default();
+        payload.entry("captcha_vc".into()).or_default();
         payload
             .entry("cf_captcha_kind".into())
             .or_insert_with(|| "h".into());
-        payload
-            .entry("h-captcha-response".into())
-            .or_default();
+        payload.entry("h-captcha-response".into()).or_default();
 
         let mut headers = HashMap::new();
         headers.insert(
