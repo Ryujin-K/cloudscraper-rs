@@ -132,6 +132,7 @@ impl ScraperResponse {
 #[derive(Clone)]
 pub struct CloudScraperConfig {
     pub user_agent: UserAgentOptions,
+    pub content_type: Option<String>,
     pub proxies: Vec<String>,
     pub proxy_config: ProxyConfig,
     pub enable_metrics: bool,
@@ -153,6 +154,7 @@ impl Default for CloudScraperConfig {
     fn default() -> Self {
         Self {
             user_agent: UserAgentOptions::default(),
+            content_type: None,
             proxies: Vec::new(),
             proxy_config: ProxyConfig::default(),
             enable_metrics: true,
@@ -186,6 +188,11 @@ impl CloudScraperBuilder {
 
     pub fn with_user_agent_options(mut self, options: UserAgentOptions) -> Self {
         self.config.user_agent = options;
+        self
+    }
+
+    pub fn with_content_type(mut self, content_type: String) -> Self {
+        self.config.content_type = Some(content_type);
         self
     }
 
@@ -471,7 +478,7 @@ impl CloudScraper {
         loop {
             attempt += 1;
 
-            let (headers_http, anti_ctx, proxy, mut delay) = self
+            let (mut headers_http, anti_ctx, proxy, mut delay) = self
                 .prepare_request(
                     &method,
                     &url,
@@ -479,6 +486,14 @@ impl CloudScraper {
                     forced_proxy.take(),
                 )
                 .await?;
+
+            if let Some(ref ct) = self.config.content_type {
+                headers_http.insert(
+                    HeaderName::from_static("content-type"),
+                    HeaderValue::from_str(ct)
+                        .map_err(|_| CloudScraperError::InvalidHeader("content-type".into()))?,
+                );
+            }
 
             if let Some(hint) = anti_ctx.delay_hint()
                 && hint > delay
