@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-cloudscraper-rs = "0.1"
+cloudscraper-rs = "0.2"
 tokio = { version = "1.0", features = ["full"] }
 ```
 

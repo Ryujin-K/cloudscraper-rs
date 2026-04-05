@@ -21,6 +21,7 @@ exclude = [
 reqwest = { version = "0.12", features = ["cookies", "gzip", "brotli", "json", "native-tls"], default-features = false }
 http = "1.0"
 tokio = { version = "1.42", features = ["full"] }
+cookie = "0.18.1"
 
 # HTML Parsing
 scraper = "0.24"

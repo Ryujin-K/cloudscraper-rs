@@ -348,6 +348,7 @@ dependencies = [
  "boa_engine",
  "bytes",
  "chrono",
+ "cookie",
  "html-escape",
  "http",
  "log",
