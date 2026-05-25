@@ -27,9 +27,14 @@ use crate::challenges::pipeline::{
 };
 use crate::challenges::solvers::access_denied::ProxyPool;
 use crate::challenges::solvers::{
-    MitigationPlan, TlsProfileManager, access_denied::AccessDeniedHandler,
-    bot_management::BotManagementHandler, javascript_v1::JavascriptV1Solver,
-    javascript_v2::JavascriptV2Solver, managed_v3::ManagedV3Solver, rate_limit::RateLimitHandler,
+    MitigationPlan, TlsProfileManager,
+    access_denied::AccessDeniedHandler,
+    bot_management::BotManagementHandler,
+    browser::{BrowserChallengeSolver, BrowserSolveRequest},
+    javascript_v1::JavascriptV1Solver,
+    javascript_v2::JavascriptV2Solver,
+    managed_v3::ManagedV3Solver,
+    rate_limit::RateLimitHandler,
     turnstile::TurnstileSolver,
 };
 use crate::challenges::user_agents::{
@@ -163,6 +168,10 @@ pub struct CloudScraperConfig {
     pub interpreter: Option<Arc<dyn JavascriptInterpreter>>,
     pub tls_config: TLSConfig,
     pub max_challenge_attempts: usize,
+    /// Optional headless-browser fallback for interactive challenges
+    /// (`orchestrate/chl_page/v1`). When unset, those challenges surface as
+    /// [`CloudScraperError::Unsupported`].
+    pub browser_solver: Option<Arc<dyn BrowserChallengeSolver>>,
 }
 
 impl Default for CloudScraperConfig {
@@ -185,6 +194,7 @@ impl Default for CloudScraperConfig {
             interpreter: None,
             tls_config: TLSConfig::default(),
             max_challenge_attempts: 3,
+            browser_solver: None,
         }
     }
 }
@@ -290,6 +300,26 @@ impl CloudScraperBuilder {
         self
     }
 
+    /// Install a custom headless-browser fallback used for interactive
+    /// challenges (`orchestrate/chl_page/v1`).
+    pub fn with_browser_solver(mut self, solver: Arc<dyn BrowserChallengeSolver>) -> Self {
+        self.config.browser_solver = Some(solver);
+        self
+    }
+
+    /// Enable the bundled `headless_chrome` fallback for interactive challenges.
+    ///
+    /// Requires the `browser` cargo feature and a Chrome/Chromium binary at
+    /// runtime. The browser egresses through the same proxy and emulates the
+    /// same User-Agent as the request client so the resulting `cf_clearance`
+    /// cookie is valid for the follow-up request.
+    #[cfg(feature = "browser")]
+    pub fn enable_headless_browser(mut self) -> Self {
+        use crate::challenges::solvers::browser::HeadlessChromeSolver;
+        self.config.browser_solver = Some(Arc::new(HeadlessChromeSolver::new()));
+        self
+    }
+
     pub fn build(self) -> CloudScraperResult<CloudScraper> {
         CloudScraper::with_config(self.config)
     }
@@ -338,7 +368,10 @@ struct ClientPool {
 }
 
 impl ClientPool {
-    fn new(base_headers: reqwest::header::HeaderMap, cookie_jar: Arc<reqwest::cookie::Jar>) -> Self {
+    fn new(
+        base_headers: reqwest::header::HeaderMap,
+        cookie_jar: Arc<reqwest::cookie::Jar>,
+    ) -> Self {
         Self {
             base_headers,
             cookie_jar,
@@ -376,6 +409,7 @@ pub struct CloudScraper {
     client_pool: Arc<ClientPool>,
     challenge_client: Arc<dyn ChallengeHttpClient>,
     cookie_jar: Arc<reqwest::cookie::Jar>,
+    browser_solver: Option<Arc<dyn BrowserChallengeSolver>>,
     state: StateManager,
     metrics: Option<MetricsCollector>,
     events: Arc<EventDispatcher>,
@@ -462,6 +496,7 @@ impl CloudScraper {
         let cookie_jar = Arc::new(reqwest::cookie::Jar::default());
         let client_pool = Arc::new(ClientPool::new(base_headers_reqwest, cookie_jar.clone()));
         let challenge_client = Arc::new(ReqwestChallengeHttpClient::with_jar(cookie_jar.clone())?);
+        let browser_solver = config.browser_solver.clone();
         let state = StateManager::new();
         let metrics = config.enable_metrics.then(MetricsCollector::new);
 
@@ -477,6 +512,7 @@ impl CloudScraper {
             client_pool,
             challenge_client,
             cookie_jar,
+            browser_solver,
             state,
             metrics,
             events: Arc::new(events),
@@ -711,6 +747,42 @@ impl CloudScraper {
                 ChallengePipelineResult::Unsupported { detection, reason } => {
                     self.record_outcome(false, status, latency, delay, &final_url)
                         .await;
+
+                    // Interactive challenges (orchestrate/chl_page) can't be solved
+                    // in-process. If a browser fallback is configured, drive it to
+                    // obtain cf_clearance, then retry the original request.
+                    if let Some(solver) = self.browser_solver.clone()
+                        && matches!(
+                            reason,
+                            UnsupportedReason::MissingDependency("browser_fallback")
+                        )
+                        && attempt < self.config.max_challenge_attempts
+                    {
+                        match self
+                            .run_browser_fallback(
+                                solver.as_ref(),
+                                &url,
+                                &headers_http,
+                                proxy.as_deref(),
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                self.events.dispatch(ScraperEvent::Retry(RetryEvent {
+                                    domain: detection.url.clone(),
+                                    attempt: (attempt + 1) as u32,
+                                    reason: "browser_fallback".into(),
+                                    scheduled_after: Duration::default(),
+                                    timestamp: chrono::Utc::now(),
+                                }));
+                                continue;
+                            }
+                            Err(err) => {
+                                log::warn!("browser fallback failed for {}: {err}", detection.url);
+                            }
+                        }
+                    }
+
                     self.events
                         .dispatch(ScraperEvent::Challenge(ChallengeEvent {
                             domain: detection.url,
@@ -734,6 +806,46 @@ impl CloudScraper {
                 }
             }
         }
+    }
+
+    /// Drive the configured browser fallback to clear an interactive challenge
+    /// and inject the harvested cookies (notably `cf_clearance`) into the shared
+    /// jar so the retried request carries them.
+    async fn run_browser_fallback(
+        &self,
+        solver: &dyn BrowserChallengeSolver,
+        url: &Url,
+        headers: &HeaderMap,
+        proxy: Option<&str>,
+    ) -> CloudScraperResult<()> {
+        let user_agent = headers
+            .get(HeaderName::from_static("user-agent"))
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+
+        let request = BrowserSolveRequest::new(url)
+            .with_user_agent(user_agent.as_deref())
+            .with_proxy(proxy);
+
+        let outcome = solver
+            .solve(request)
+            .await
+            .map_err(|err| CloudScraperError::Aborted(format!("browser fallback: {err}")))?;
+
+        for cookie in &outcome.cookies {
+            if let Some(reference) = cookie.reference_url() {
+                self.cookie_jar
+                    .add_cookie_str(&cookie.to_set_cookie(), &reference);
+            }
+        }
+
+        log::debug!(
+            "browser fallback for {url} harvested {} cookie(s) (clearance: {})",
+            outcome.cookies.len(),
+            outcome.has_clearance()
+        );
+
+        Ok(())
     }
 
     async fn handle_submission(

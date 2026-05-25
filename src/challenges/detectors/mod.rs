@@ -549,7 +549,9 @@ mod tests {
         };
 
         let mut detector = ChallengeDetector::new();
-        let detection = detector.detect(&response).expect("should detect via cf-ray");
+        let detection = detector
+            .detect(&response)
+            .expect("should detect via cf-ray");
         assert_eq!(detection.challenge_type, ChallengeType::ManagedInteractive);
     }
 

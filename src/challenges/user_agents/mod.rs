@@ -99,12 +99,11 @@ static USER_AGENT_MANAGER: Lazy<Result<UserAgentManager, UserAgentError>> = Lazy
     for path in candidate_paths() {
         match fs::read_to_string(&path) {
             Ok(contents) => {
-                let data = parse_dataset(&contents).map_err(|source| {
-                    UserAgentError::InvalidJson {
+                let data =
+                    parse_dataset(&contents).map_err(|source| UserAgentError::InvalidJson {
                         path: path.clone(),
                         source,
-                    }
-                })?;
+                    })?;
                 return Ok(UserAgentManager { data });
             }
             // A missing override is expected; fall through to the next candidate.

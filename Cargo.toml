@@ -60,9 +60,25 @@ redb = "2.0"
 # Date/Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Headless browser fallback (optional; enabled by the `browser` feature).
+# Requires a Chrome/Chromium binary at runtime. Kept out of the default build
+# so the base crate stays lightweight and dependency-light.
+headless_chrome = { version = "1.0.21", optional = true }
+
 [features]
 default = []
-full = []
+full = ["browser"]
+# Headless-browser fallback for interactive challenges (orchestrate/chl_page).
+browser = ["dep:headless_chrome"]
+
+# Build docs.rs with all features so the `browser`-gated API is documented.
+[package.metadata.docs.rs]
+all-features = true
+
+# The headless example needs the browser fallback API.
+[[example]]
+name = "headless"
+required-features = ["browser"]
 
 [profile.release]
 opt-level = 3

@@ -28,6 +28,24 @@ cloudscraper-rs = "0.2"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
+The user-agent dataset (`browsers.json`) is **embedded in the crate**, so it works
+out of the box with no extra files. To ship a customised dataset, point the
+`CLOUDSCRAPER_BROWSERS_JSON` environment variable at your own file (or place a
+`browsers.json` in the working directory); it takes precedence over the embedded
+one.
+
+### Cargo features
+
+| Feature   | Default | Description |
+|-----------|---------|-------------|
+| `browser` | off     | Headless-browser fallback for interactive challenges (`orchestrate/chl_page`). Pulls in `headless_chrome` and needs a Chrome/Chromium binary at runtime. |
+| `full`    | off     | Enables all optional features (currently `browser`). |
+
+```toml
+[dependencies]
+cloudscraper-rs = { version = "0.2", features = ["browser"] }
+```
+
 ## Configuration
 
 ```rust
@@ -50,6 +68,58 @@ let scraper = CloudScraper::builder()
 
 See `cloudscraper.rs` for additional builder toggles (custom captcha provider, TLS config, spoofing consistency, etc.).
 
+## Cookies
+
+A single cookie jar is shared across the request client and the challenge client,
+so tokens issued while solving (e.g. `cf_clearance`) persist and stay readable:
+
+```rust
+use url::Url;
+
+let url = Url::parse("https://example.com")?;
+let _ = scraper.get(url.as_str()).await?;
+
+// Read the full accumulated jar for a domain.
+for cookie in scraper.cookies(&url) {
+    println!("{}={}", cookie.name(), cookie.value());
+}
+
+// Seed a pre-obtained token.
+scraper.set_cookie(&url, "cf_clearance=...; Domain=example.com; Path=/");
+```
+
+`ScraperResponse::cookies()` returns only the `Set-Cookie` headers of that single
+response; `CloudScraper::cookies(&url)` returns the full jar.
+
+## Headless browser fallback
+
+Modern interactive challenges (`orchestrate/chl_page/v1`) require executing
+Cloudflare's browser VM, which the in-process JS interpreter cannot do. With the
+`browser` feature, an opt-in headless-Chrome fallback clears them: it runs through
+the same proxy and User-Agent, harvests `cf_clearance` into the shared jar, and
+retries the original request.
+
+```rust
+// Requires `features = ["browser"]` and a Chrome/Chromium binary.
+let scraper = CloudScraper::builder()
+    .enable_headless_browser()
+    .build()?;
+
+let response = scraper.get("https://protected.example").await?;
+```
+
+You can also plug in a custom implementation via
+`.with_browser_solver(Arc<dyn BrowserChallengeSolver>)`. See
+[`examples/headless.rs`](examples/headless.rs):
+
+```bash
+cargo run --example headless --features browser -- https://example.com
+```
+
+Without a configured solver, an interactive challenge surfaces as
+`CloudScraperError::Unsupported` (rather than a silent `403`), so callers can
+detect and handle it explicitly.
+
 ## Supported Challenges
 
 - ✅ Cloudflare v1 (IUAM)
@@ -58,7 +128,8 @@ See `cloudscraper.rs` for additional builder toggles (custom captcha provider, T
 - ✅ Cloudflare Turnstile
 - ✅ Access Denied / Bot Management mitigations
 - ✅ Rate limiting guidance
-- ⚠️ Headless browser fallback (planned)
+- ✅ Managed interactive challenge (`orchestrate/chl_page`) — detection built in; solving via the `browser` feature
+- ⚠️ Real TLS/JA3 impersonation (planned; `reqwest`/`native-tls` cannot yet emit custom fingerprints)
 
 ## Architecture
 
@@ -83,7 +154,8 @@ CloudScraper
 
 ## TODO
 
-- [ ] Ship optional headless fallback integration
+- [x] Ship optional headless fallback integration (`browser` feature)
+- [ ] Real TLS/JA3 impersonation (pluggable transport)
 - [ ] Expand captcha provider catalogue
 - [ ] Persist state/metrics for long-running bots
 - [ ] Add first-class CLI / interactive probe tool

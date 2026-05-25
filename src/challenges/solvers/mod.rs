@@ -4,6 +4,7 @@
 
 pub mod access_denied;
 pub mod bot_management;
+pub mod browser;
 pub mod javascript_v1;
 pub mod javascript_v2;
 pub mod managed_v3;
