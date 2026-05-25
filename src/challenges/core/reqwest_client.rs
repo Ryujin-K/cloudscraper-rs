@@ -11,6 +11,7 @@ use http::{
     HeaderMap as HttpHeaderMap, HeaderName as HttpHeaderName, HeaderValue as HttpHeaderValue,
     Method as HttpMethod,
 };
+use reqwest::cookie::Jar;
 use reqwest::{Client, Method, header::HeaderMap, redirect::Policy};
 use url::Url;
 
@@ -30,6 +31,27 @@ impl ReqwestChallengeHttpClient {
         let client = Client::builder()
             .redirect(Policy::none())
             .cookie_store(true)
+            .build()
+            .map_err(|err| {
+                ChallengeExecutionError::Client(ChallengeHttpClientError::Transport(
+                    err.to_string(),
+                ))
+            })?;
+
+        Ok(Self { client })
+    }
+
+    /// Creates a client that shares `jar` as its cookie store.
+    ///
+    /// Sharing a single jar with the main request client is essential: cookies
+    /// issued while solving a challenge (e.g. `cf_clearance`) are written to the
+    /// same store the caller can later read, and are replayed on subsequent
+    /// requests. Redirects stay disabled so the executor can inspect 30x
+    /// responses (which often carry the clearance `Set-Cookie`) explicitly.
+    pub fn with_jar(jar: Arc<Jar>) -> Result<Self, ChallengeExecutionError> {
+        let client = Client::builder()
+            .redirect(Policy::none())
+            .cookie_provider(jar)
             .build()
             .map_err(|err| {
                 ChallengeExecutionError::Client(ChallengeHttpClientError::Transport(

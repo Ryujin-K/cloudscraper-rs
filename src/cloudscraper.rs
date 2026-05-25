@@ -128,9 +128,12 @@ impl ScraperResponse {
         self.body.clone()
     }
 
-    /// Response cookies.
+    /// Cookies set by *this* response via its `Set-Cookie` headers.
+    ///
+    /// This only reflects the final response. For the full set of cookies a
+    /// domain has accumulated (including those issued during redirects and
+    /// challenge solving, e.g. `cf_clearance`), use [`CloudScraper::cookies`].
     pub fn cookies(&self) -> Vec<Cookie<'static>> {
-        // Works. But, maybe there is a better way.. I don't know lol...
         self.headers
             .get_all(SET_COOKIE)
             .iter()
@@ -330,13 +333,15 @@ impl CloudScraperInner {
 /// Reqwest client pool keyed by proxy endpoint.
 struct ClientPool {
     base_headers: reqwest::header::HeaderMap,
+    cookie_jar: Arc<reqwest::cookie::Jar>,
     clients: Mutex<HashMap<Option<String>, reqwest::Client>>,
 }
 
 impl ClientPool {
-    fn new(base_headers: reqwest::header::HeaderMap) -> Self {
+    fn new(base_headers: reqwest::header::HeaderMap, cookie_jar: Arc<reqwest::cookie::Jar>) -> Self {
         Self {
             base_headers,
+            cookie_jar,
             clients: Mutex::new(HashMap::new()),
         }
     }
@@ -348,8 +353,10 @@ impl ClientPool {
             return Ok(client.clone());
         }
 
+        // Every pooled client shares one jar so cookies persist across proxy
+        // switches and are visible to the challenge client and the caller.
         let mut builder = reqwest::Client::builder()
-            .cookie_store(true)
+            .cookie_provider(self.cookie_jar.clone())
             .default_headers(self.base_headers.clone());
 
         if let Some(endpoint) = proxy {
@@ -368,6 +375,7 @@ pub struct CloudScraper {
     base_headers_http: HeaderMap,
     client_pool: Arc<ClientPool>,
     challenge_client: Arc<dyn ChallengeHttpClient>,
+    cookie_jar: Arc<reqwest::cookie::Jar>,
     state: StateManager,
     metrics: Option<MetricsCollector>,
     events: Arc<EventDispatcher>,
@@ -448,8 +456,12 @@ impl CloudScraper {
             inner.ml_optimizer = Some(MLOptimizer::default());
         }
 
-        let client_pool = Arc::new(ClientPool::new(base_headers_reqwest));
-        let challenge_client = Arc::new(ReqwestChallengeHttpClient::new()?);
+        // One cookie jar shared by the request pool and the challenge client so
+        // tokens such as `cf_clearance` survive challenge solving and remain
+        // readable by the caller (see `cookies` / `set_cookie`).
+        let cookie_jar = Arc::new(reqwest::cookie::Jar::default());
+        let client_pool = Arc::new(ClientPool::new(base_headers_reqwest, cookie_jar.clone()));
+        let challenge_client = Arc::new(ReqwestChallengeHttpClient::with_jar(cookie_jar.clone())?);
         let state = StateManager::new();
         let metrics = config.enable_metrics.then(MetricsCollector::new);
 
@@ -464,6 +476,7 @@ impl CloudScraper {
             base_headers_http,
             client_pool,
             challenge_client,
+            cookie_jar,
             state,
             metrics,
             events: Arc::new(events),
@@ -475,6 +488,35 @@ impl CloudScraper {
     pub async fn get(&self, url: &str) -> CloudScraperResult<ScraperResponse> {
         let url = Url::parse(url)?;
         self.request(Method::GET, url, None).await
+    }
+
+    /// Return the cookies currently stored for `url` in the shared jar.
+    ///
+    /// Unlike [`ScraperResponse::cookies`] (which only reflects the `Set-Cookie`
+    /// headers of a single response), this exposes the full accumulated jar —
+    /// including cookies set during redirects and challenge solving such as
+    /// `cf_clearance`.
+    pub fn cookies(&self, url: &Url) -> Vec<Cookie<'static>> {
+        use reqwest::cookie::CookieStore;
+        self.cookie_jar
+            .cookies(url)
+            .and_then(|value| value.to_str().map(str::to_owned).ok())
+            .map(|header| {
+                header
+                    .split("; ")
+                    .filter_map(|pair| Cookie::parse(pair.to_string()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Inject a cookie into the shared jar for `url`.
+    ///
+    /// Useful to seed a pre-obtained `cf_clearance`/session cookie so subsequent
+    /// requests reuse it. `cookie` is a standard `Set-Cookie`-style string, e.g.
+    /// `"cf_clearance=abc; Domain=example.com; Path=/"`.
+    pub fn set_cookie(&self, url: &Url, cookie: &str) {
+        self.cookie_jar.add_cookie_str(cookie, url);
     }
 
     /// Perform an arbitrary HTTP request.
@@ -916,4 +958,29 @@ fn reqwest_to_http(headers: &reqwest::header::HeaderMap) -> CloudScraperResult<H
         map.insert(header_name, header_value);
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookie_jar_starts_empty_and_accepts_injected_cookies() {
+        // Regression guard for issue #4: callers must be able to read cookies
+        // (e.g. an injected `cf_clearance`) back from the shared jar.
+        let scraper = CloudScraper::new().expect("scraper builds from embedded dataset");
+        let url = Url::parse("https://example.com/").unwrap();
+
+        assert!(scraper.cookies(&url).is_empty());
+
+        scraper.set_cookie(&url, "cf_clearance=token123; Domain=example.com; Path=/");
+
+        let cookies = scraper.cookies(&url);
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.name() == "cf_clearance" && c.value() == "token123"),
+            "expected injected cf_clearance to be readable, got {cookies:?}"
+        );
+    }
 }

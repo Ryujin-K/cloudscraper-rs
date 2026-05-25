@@ -274,6 +274,16 @@ impl ChallengePipeline {
                     },
                 }
             }
+            ChallengeType::ManagedInteractive => {
+                // Recognised, but the modern interactive flow requires executing
+                // Cloudflare's browser VM. Surface a precise, actionable result
+                // instead of silently returning the raw 403 (issues #2/#3); the
+                // headless-browser fallback will handle this challenge type.
+                unsupported(
+                    detection_for_branch,
+                    UnsupportedReason::MissingDependency("browser_fallback"),
+                )
+            }
             ChallengeType::Turnstile => {
                 let Some(solver) = self.turnstile.as_ref() else {
                     return unsupported(

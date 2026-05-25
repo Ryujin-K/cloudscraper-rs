@@ -131,13 +131,28 @@ fn extract_hidden_fields(fragment: &str) -> Result<Vec<(String, String)>, Challe
 }
 
 /// Detect whether the response is served by Cloudflare.
+///
+/// Modern challenges are not always served with `Server: cloudflare` visible to
+/// the client, so this also checks edge headers (`cf-ray`, `cf-mitigated`) and,
+/// as a last resort, body fingerprints (`/cdn-cgi/`). This breadth is what lets
+/// the detector recognise newer flows such as `orchestrate/chl_page/v1`.
 pub fn is_cloudflare_response(response: &ChallengeResponse<'_>) -> bool {
-    response
+    let server_is_cf = response
         .headers
         .get(SERVER)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_ascii_lowercase().starts_with("cloudflare"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+
+    if server_is_cf
+        || response.headers.contains_key("cf-ray")
+        || response.headers.contains_key("cf-mitigated")
+    {
+        return true;
+    }
+
+    let body = response.body;
+    body.contains("/cdn-cgi/") || body.contains("cloudflare") || body.contains("Cloudflare")
 }
 
 /// Build origin header value from URL (`scheme://host[:port]`).
