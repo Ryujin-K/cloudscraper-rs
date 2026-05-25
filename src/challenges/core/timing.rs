@@ -75,3 +75,58 @@ impl DelayStrategy {
         Duration::from_millis(delay.max(0.0) as u64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_delay_respects_bounds() {
+        let strategy = DelayStrategy::new(1000)
+            .with_bounds(500, 2000)
+            .with_variance(0.25);
+        for _ in 0..50 {
+            let delay = strategy.next_delay().as_millis() as u64;
+            assert!((500..=2000).contains(&delay), "delay {delay} out of bounds");
+        }
+    }
+
+    #[test]
+    fn failures_escalate_delay() {
+        // Variance 0 makes the delay deterministic; wide bounds avoid clamping.
+        let mut strategy = DelayStrategy::new(1000)
+            .with_variance(0.0)
+            .with_bounds(0, 100_000);
+        let base = strategy.next_delay();
+
+        strategy.register_feedback(TimingFeedback::Failure);
+        strategy.register_feedback(TimingFeedback::Failure); // recent_failures == 2 -> x1.5
+        let escalated = strategy.next_delay();
+        assert!(escalated > base);
+
+        strategy.register_feedback(TimingFeedback::Failure); // > 2 -> x2.0
+        let escalated_more = strategy.next_delay();
+        assert!(escalated_more > escalated);
+    }
+
+    #[test]
+    fn rate_limited_then_success_recovers() {
+        let mut strategy = DelayStrategy::new(1000)
+            .with_variance(0.0)
+            .with_bounds(0, 100_000);
+        strategy.register_feedback(TimingFeedback::RateLimited); // +2 -> x1.5
+        assert!(strategy.next_delay() > Duration::from_millis(1000));
+
+        strategy.register_feedback(TimingFeedback::Success); // -1
+        strategy.register_feedback(TimingFeedback::Success); // -1 -> back to 0
+        assert_eq!(strategy.next_delay(), Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn success_below_floor_saturates_at_zero() {
+        let mut strategy = DelayStrategy::new(500).with_variance(0.0);
+        strategy.register_feedback(TimingFeedback::Success); // saturating_sub on 0
+        // No panic and delay stays sane.
+        assert!(strategy.next_delay() <= Duration::from_millis(1000));
+    }
+}

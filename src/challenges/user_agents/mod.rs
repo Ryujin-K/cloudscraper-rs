@@ -447,4 +447,80 @@ mod tests {
         let profile = manager.select_profile(UserAgentOptions::default()).unwrap();
         assert!(profile.headers.contains_key("User-Agent"));
     }
+
+    #[test]
+    fn both_devices_disabled_is_invalid() {
+        let opts = UserAgentOptions {
+            desktop: false,
+            mobile: false,
+            ..Default::default()
+        };
+        assert!(matches!(
+            get_user_agent_profile(opts),
+            Err(UserAgentError::InvalidOptions(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_platform_is_rejected() {
+        let opts = UserAgentOptions {
+            platform: Some("mars".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            get_user_agent_profile(opts),
+            Err(UserAgentError::InvalidOptions(_))
+        ));
+    }
+
+    #[test]
+    fn custom_user_agent_is_returned_verbatim() {
+        let opts = UserAgentOptions {
+            custom: Some("CustomUA/9.9".into()),
+            ..Default::default()
+        };
+        let profile = get_user_agent_profile(opts).unwrap();
+        assert_eq!(profile.headers.get("User-Agent").unwrap(), "CustomUA/9.9");
+        assert!(!profile.cipher_suites.is_empty());
+    }
+
+    #[test]
+    fn default_profile_has_all_core_headers() {
+        let profile = get_user_agent_profile(UserAgentOptions::default()).unwrap();
+        for header in ["User-Agent", "Accept", "Accept-Language", "Accept-Encoding"] {
+            assert!(profile.headers.contains_key(header), "missing {header}");
+        }
+    }
+
+    #[test]
+    fn brotli_is_stripped_by_default() {
+        let profile = get_user_agent_profile(UserAgentOptions::default()).unwrap();
+        let encoding = profile
+            .headers
+            .get("Accept-Encoding")
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !encoding
+                .split(',')
+                .any(|e| e.trim().eq_ignore_ascii_case("br")),
+            "brotli should be stripped: {encoding}"
+        );
+    }
+
+    #[test]
+    fn strip_brotli_removes_only_br_token() {
+        let mut map = HashMap::new();
+        map.insert(
+            "Accept-Encoding".to_string(),
+            "gzip, br, deflate".to_string(),
+        );
+        strip_brotli(&mut map);
+        assert_eq!(map.get("Accept-Encoding").unwrap(), "gzip, deflate");
+    }
+
+    #[test]
+    fn default_cipher_suites_are_present() {
+        assert!(!default_cipher_suites().is_empty());
+    }
 }

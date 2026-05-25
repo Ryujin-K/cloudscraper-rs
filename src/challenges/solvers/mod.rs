@@ -101,3 +101,41 @@ pub enum SolverVariant {
     AccessDenied,
     BotManagement,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_carries_wait_and_reason() {
+        let plan = MitigationPlan::retry_after(Duration::from_secs(2), "wait");
+        assert!(plan.should_retry);
+        assert_eq!(plan.wait, Some(Duration::from_secs(2)));
+        assert_eq!(plan.reason, "wait");
+        assert!(plan.new_proxy.is_none());
+    }
+
+    #[test]
+    fn retry_immediately_has_no_wait() {
+        let plan = MitigationPlan::retry_immediately("go");
+        assert!(plan.should_retry);
+        assert!(plan.wait.is_none());
+        assert_eq!(plan.reason, "go");
+    }
+
+    #[test]
+    fn no_retry_disables_retry() {
+        let plan = MitigationPlan::no_retry("stop");
+        assert!(!plan.should_retry);
+        assert!(plan.wait.is_none());
+    }
+
+    #[test]
+    fn builder_helpers_attach_proxy_and_metadata() {
+        let plan = MitigationPlan::retry_immediately("r")
+            .with_proxy("http://p")
+            .insert_metadata("k", "v");
+        assert_eq!(plan.new_proxy.as_deref(), Some("http://p"));
+        assert_eq!(plan.metadata.get("k").unwrap(), "v");
+    }
+}
