@@ -118,3 +118,65 @@ pub enum CaptchaError {
     #[error("captcha error: {0}")]
     Other(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_task() -> CaptchaTask {
+        CaptchaTask::new("sitekey", Url::parse("https://example.com/").unwrap())
+            .with_action("login")
+            .insert_metadata("k", "v")
+    }
+
+    #[test]
+    fn captcha_task_builder_sets_fields() {
+        let task = sample_task();
+        assert_eq!(task.site_key, "sitekey");
+        assert_eq!(task.action.as_deref(), Some("login"));
+        assert_eq!(task.data.get("k").unwrap(), "v");
+    }
+
+    #[test]
+    fn captcha_solution_builder_sets_fields() {
+        let solution = CaptchaSolution::new("tok")
+            .with_expiry(Duration::from_secs(30))
+            .insert_metadata("a", "b");
+        assert_eq!(solution.token, "tok");
+        assert_eq!(solution.expires_in, Some(Duration::from_secs(30)));
+        assert_eq!(solution.metadata.get("a").unwrap(), "b");
+    }
+
+    #[test]
+    fn config_has_sane_defaults() {
+        let config = CaptchaConfig::default();
+        assert_eq!(config.timeout, Duration::from_secs(120));
+        assert_eq!(config.poll_interval, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn with_config_constructors_compile_for_all_providers() {
+        let config = CaptchaConfig {
+            timeout: Duration::from_secs(5),
+            poll_interval: Duration::from_secs(1),
+        };
+        let _ = AntiCaptchaProvider::with_config("k", config.clone());
+        let _ = CapSolverProvider::with_config("k", config.clone());
+        let _ = TwoCaptchaProvider::with_config("k", config);
+    }
+
+    #[tokio::test]
+    async fn providers_expose_names_and_report_not_implemented() {
+        let providers: Vec<Box<dyn CaptchaProvider>> = vec![
+            Box::new(AntiCaptchaProvider::new("key")),
+            Box::new(CapSolverProvider::new("key")),
+            Box::new(TwoCaptchaProvider::new("key")),
+        ];
+        let task = sample_task();
+        for provider in providers {
+            assert!(!provider.name().is_empty());
+            let err = provider.solve(&task).await.unwrap_err();
+            assert!(matches!(err, CaptchaError::NotImplemented(_)));
+        }
+    }
+}

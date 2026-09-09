@@ -237,4 +237,80 @@ mod tests {
         assert_eq!(fp1.user_agent, fp2.user_agent);
         assert_ne!(fp1.canvas_fingerprint, fp3.canvas_fingerprint);
     }
+
+    #[test]
+    fn consistency_none_varies_per_call() {
+        let mut generator =
+            FingerprintGenerator::new(BrowserType::Chrome).with_consistency(ConsistencyLevel::None);
+        let a = generator.generate_for("x.com");
+        let b = generator.generate_for("x.com");
+        assert_ne!(a.canvas_fingerprint, b.canvas_fingerprint);
+    }
+
+    #[test]
+    fn consistency_global_is_stable_across_domains() {
+        let mut generator =
+            FingerprintGenerator::default().with_consistency(ConsistencyLevel::Global);
+        let a = generator.generate_for("x.com");
+        let b = generator.generate_for("y.com");
+        assert_eq!(a.canvas_fingerprint, b.canvas_fingerprint);
+    }
+
+    #[test]
+    fn invalidate_forces_new_domain_fingerprint() {
+        let mut generator = FingerprintGenerator::default();
+        let a = generator.generate_for("x.com");
+        generator.invalidate("x.com");
+        let b = generator.generate_for("x.com");
+        assert_ne!(a.canvas_fingerprint, b.canvas_fingerprint);
+    }
+
+    #[test]
+    fn set_browser_switches_template_and_clears_cache() {
+        let mut generator = FingerprintGenerator::new(BrowserType::Chrome);
+        assert!(
+            generator
+                .generate_for("x.com")
+                .user_agent
+                .contains("Chrome")
+        );
+        generator.set_browser(BrowserType::Firefox);
+        assert!(
+            generator
+                .generate_for("x.com")
+                .user_agent
+                .contains("Firefox")
+        );
+        // Setting the same browser is a no-op (covers the unchanged branch).
+        generator.set_browser(BrowserType::Firefox);
+    }
+
+    #[test]
+    fn every_browser_type_produces_a_fingerprint() {
+        for browser in [
+            BrowserType::Chrome,
+            BrowserType::Firefox,
+            BrowserType::Safari,
+            BrowserType::Edge,
+            BrowserType::MobileChrome,
+            BrowserType::MobileSafari,
+        ] {
+            let mut generator =
+                FingerprintGenerator::new(browser).with_consistency(ConsistencyLevel::None);
+            let fp = generator.generate_for("x.com");
+            assert!(!fp.user_agent.is_empty(), "{browser:?}");
+            assert!(!fp.webgl_renderer.is_empty(), "{browser:?}");
+            assert!(fp.screen_resolution.0 > 0, "{browser:?}");
+            assert!(fp.canvas_fingerprint.starts_with("canvas-"));
+        }
+    }
+
+    #[test]
+    fn fingerprint_manager_trait_invalidates() {
+        let mut generator = FingerprintGenerator::default();
+        let a = generator.generate_for("x.com");
+        FingerprintManager::invalidate(&mut generator, "x.com");
+        let b = generator.generate_for("x.com");
+        assert_ne!(a.canvas_fingerprint, b.canvas_fingerprint);
+    }
 }

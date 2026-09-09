@@ -504,4 +504,179 @@ mod tests {
         assert!(state.last_success.is_some());
         assert!(state.recent_errors.is_empty());
     }
+
+    #[test]
+    fn record_outcome_with_metrics_updates_timing() {
+        let mut state = DomainState::default();
+        state.record_outcome_with_metrics(
+            true,
+            Duration::from_millis(200),
+            Duration::from_millis(50),
+            None,
+        );
+        assert_eq!(state.success_streak, 1);
+        assert!(state.timing.optimal_delay.is_some());
+        assert!(state.timing.avg_response_time_secs > 0.0);
+    }
+
+    #[test]
+    fn failure_streak_accumulates_then_success_resets() {
+        let mut state = DomainState::default();
+        state.record_failure("boom");
+        state.record_failure("boom2");
+        assert_eq!(state.failure_streak, 2);
+        assert_eq!(state.recent_errors.len(), 2);
+        assert_eq!(state.last_error.as_deref(), Some("boom2"));
+
+        state.record_success();
+        assert_eq!(state.failure_streak, 0);
+        assert_eq!(state.success_streak, 1);
+        assert!(state.recent_errors.is_empty());
+        assert!(state.last_error.is_none());
+    }
+
+    #[test]
+    fn push_error_caps_history_and_keeps_newest() {
+        let mut state = DomainState::default();
+        for i in 0..(ERROR_HISTORY_LIMIT + 10) {
+            state.push_error(Some(500), format!("err-{i}"));
+        }
+        assert_eq!(state.recent_errors.len(), ERROR_HISTORY_LIMIT);
+        let newest = state.recent_errors.back().unwrap();
+        assert_eq!(newest.message, format!("err-{}", ERROR_HISTORY_LIMIT + 9));
+        assert_eq!(newest.code, Some(500));
+    }
+
+    #[test]
+    fn timing_state_caps_recent_delays() {
+        let mut timing = TimingState::default();
+        for _ in 0..(RECENT_DELAY_LIMIT + 5) {
+            timing.register_outcome(true, Duration::from_millis(100), Duration::from_millis(10));
+        }
+        assert_eq!(timing.recent_delays.len(), RECENT_DELAY_LIMIT);
+        assert_eq!(timing.consecutive_failures, 0);
+        assert!(timing.optimal_delay.is_some());
+    }
+
+    #[test]
+    fn timing_state_tracks_consecutive_failures() {
+        let mut timing = TimingState::default();
+        timing.apply_boolean_outcome(false);
+        timing.apply_boolean_outcome(false);
+        assert_eq!(timing.consecutive_failures, 2);
+        assert!(timing.success_rate < 1.0);
+        timing.apply_boolean_outcome(true);
+        assert_eq!(timing.consecutive_failures, 0);
+    }
+
+    #[test]
+    fn burst_state_evicts_outside_window_and_sets_cooldown() {
+        let mut burst = BurstState::default();
+        let now = Utc::now();
+        burst.record(now - chrono::Duration::seconds(120)); // outside 60s window
+        burst.record(now);
+        assert_eq!(burst.window.len(), 1);
+        assert!(burst.cooldown_remaining(now).is_none());
+
+        burst.set_cooldown(Duration::from_secs(30));
+        assert!(burst.cooldown_remaining(Utc::now()).is_some());
+    }
+
+    #[test]
+    fn session_state_initializes_and_counts() {
+        let mut session = SessionState::default();
+        let now = Utc::now();
+        session.touch(now);
+        session.touch(now);
+        assert_eq!(session.request_count, 2);
+        assert!(session.id.is_some());
+        assert!(session.created_at.is_some());
+        assert!(session.last_activity.is_some());
+    }
+
+    #[test]
+    fn fingerprint_profile_updates_fields_and_hashes() {
+        let mut fp = FingerprintProfile::default();
+        fp.update_profile(
+            Some("nvidia".into()),
+            Some("high".into()),
+            Some("chrome".into()),
+            Some("windows".into()),
+        );
+        assert_eq!(fp.gpu_vendor.as_deref(), Some("nvidia"));
+        assert_eq!(fp.operating_system.as_deref(), Some("windows"));
+        assert!(fp.last_updated.is_some());
+
+        fp.update_hashes(Some("canvas".into()), None);
+        assert_eq!(fp.canvas_hash.as_deref(), Some("canvas"));
+        assert!(fp.webgl_hash.is_none());
+    }
+
+    #[test]
+    fn ml_strategy_state_counts_outcomes() {
+        let mut ml = MlStrategyState::default();
+        ml.record("js_v2", true);
+        ml.record("js_v2", false);
+        assert_eq!(ml.success_counter, 1);
+        assert_eq!(ml.failure_counter, 1);
+        assert_eq!(ml.last_strategy.as_deref(), Some("js_v2"));
+        assert!(ml.last_updated.is_some());
+    }
+
+    #[test]
+    fn domain_state_setters_and_mark_request() {
+        let mut state = DomainState::default();
+        state.set_cookie("k", "v");
+        state.set_header("X-Test", "1");
+        state.set_metadata("m", serde_json::json!(42));
+        state.update_timing_targets(Duration::from_secs(3), Duration::from_secs(1));
+        state.update_session_min_interval(Duration::from_millis(250));
+        state.mark_request();
+
+        assert_eq!(state.cookies.get("k").unwrap(), "v");
+        assert_eq!(state.sticky_headers.get("X-Test").unwrap(), "1");
+        assert_eq!(state.metadata.get("m").unwrap(), &serde_json::json!(42));
+        assert_eq!(state.timing_pattern.avg_interval, Duration::from_secs(3));
+        assert_eq!(state.session.min_interval, Duration::from_millis(250));
+        assert_eq!(state.session.request_count, 1);
+        assert!(state.timing_pattern.last_request.is_some());
+    }
+
+    #[test]
+    fn state_manager_lifecycle() {
+        let mgr = StateManager::new();
+        let created = mgr.get_or_create("a.com");
+        assert_eq!(created.success_streak, 0);
+
+        mgr.update("a.com", |s| s.set_cookie("c", "1"));
+        mgr.mark_request("a.com");
+        mgr.push_error("a.com", Some(403), "blocked");
+        mgr.record_outcome(
+            "a.com",
+            true,
+            Some(Duration::from_millis(10)),
+            Some(Duration::from_millis(1)),
+            None,
+        );
+        assert_eq!(mgr.get("a.com").unwrap().cookies.get("c").unwrap(), "1");
+
+        mgr.clear("a.com");
+        assert!(mgr.get("a.com").is_none());
+
+        mgr.record_success("b.com");
+        mgr.clear_all();
+        assert!(mgr.get("b.com").is_none());
+    }
+
+    #[test]
+    fn state_manager_implements_failure_recorder() {
+        let mgr = StateManager::new();
+        FailureRecorder::record_failure(&mgr, "x.com", "nope");
+        assert_eq!(mgr.get("x.com").unwrap().failure_streak, 1);
+    }
+
+    #[test]
+    fn chrono_duration_converts_std_duration() {
+        assert_eq!(chrono_duration(Duration::from_secs(5)).num_seconds(), 5);
+    }
 }

@@ -59,6 +59,14 @@ pub use crate::challenges::solvers::{
     FailureRecorder, FingerprintManager, MitigationPlan, TlsProfileManager,
 };
 
+pub use crate::challenges::solvers::browser::{
+    BrowserChallengeSolver, BrowserSolveError, BrowserSolveOutcome, BrowserSolveRequest,
+    SolvedCookie,
+};
+
+#[cfg(feature = "browser")]
+pub use crate::challenges::solvers::browser::HeadlessChromeSolver;
+
 pub use crate::challenges::user_agents::{
     UserAgentError, UserAgentOptions, UserAgentProfile, get_user_agent_profile,
 };

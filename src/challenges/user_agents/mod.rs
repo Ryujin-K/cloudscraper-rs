@@ -13,7 +13,15 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+/// User-agent dataset embedded at compile time.
+///
+/// Guarantees the crate works out of the box when consumed as a dependency: the
+/// data ships inside the binary instead of being read from a path that only
+/// exists in this repository. An on-disk dataset (see [`candidate_paths`]) still
+/// takes precedence so callers can supply a customised `browsers.json`.
+static EMBEDDED_BROWSERS_JSON: &str = include_str!("browsers.json");
 
 /// Top level representation of `browsers.json`.
 #[derive(Debug, Deserialize)]
@@ -82,32 +90,36 @@ pub struct UserAgentManager {
 }
 
 /// Global singleton loaded on demand.
+///
+/// Resolution order:
+/// 1. An on-disk override (env var `CLOUDSCRAPER_BROWSERS_JSON`, then
+///    `./browsers.json`) — lets callers ship a customised dataset.
+/// 2. The dataset embedded at compile time, which is always available.
 static USER_AGENT_MANAGER: Lazy<Result<UserAgentManager, UserAgentError>> = Lazy::new(|| {
-    let paths = candidate_paths();
-    let mut last_err = None;
-
-    for path in paths {
+    for path in candidate_paths() {
         match fs::read_to_string(&path) {
             Ok(contents) => {
-                let data: UserAgentData =
-                    serde_json::from_str(&contents).map_err(|err| UserAgentError::InvalidJson {
+                let data =
+                    parse_dataset(&contents).map_err(|source| UserAgentError::InvalidJson {
                         path: path.clone(),
-                        source: err,
+                        source,
                     })?;
                 return Ok(UserAgentManager { data });
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                last_err = Some(UserAgentError::FileMissing { path });
-                continue;
-            }
-            Err(err) => {
-                return Err(UserAgentError::Io { path, source: err });
-            }
+            // A missing override is expected; fall through to the next candidate.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(UserAgentError::Io { path, source: err }),
         }
     }
 
-    Err(last_err.unwrap_or(UserAgentError::NoDataSources))
+    // Guaranteed fallback: the dataset compiled into the binary.
+    let data = parse_dataset(EMBEDDED_BROWSERS_JSON).map_err(UserAgentError::InvalidEmbedded)?;
+    Ok(UserAgentManager { data })
 });
+
+fn parse_dataset(contents: &str) -> Result<UserAgentData, serde_json::Error> {
+    serde_json::from_str(contents)
+}
 
 /// Retrieve a profile using given options.
 pub fn get_user_agent_profile(opts: UserAgentOptions) -> Result<UserAgentProfile, UserAgentError> {
@@ -315,26 +327,18 @@ impl UserAgentManager {
     }
 }
 
-/// List all candidate paths to locate `browsers.json`.
+/// Optional on-disk overrides for the embedded dataset.
+///
+/// Checked in order: the `CLOUDSCRAPER_BROWSERS_JSON` environment variable
+/// (an explicit path), then `browsers.json` in the current working directory.
+/// When none exist, the loader falls back to [`EMBEDDED_BROWSERS_JSON`].
 fn candidate_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest_path = Path::new(&manifest);
 
-        let legacy_path = manifest_path
-            .join("cloudscraper-master (zied)")
-            .join("cloudscraper-master")
-            .join("cloudscraper")
-            .join("user_agent")
-            .join("browsers.json");
-        paths.push(legacy_path);
-
-        let embedded_path = manifest_path
-            .join("src")
-            .join("challenges")
-            .join("user_agents")
-            .join("browsers.json");
-        paths.push(embedded_path);
+    if let Ok(custom) = std::env::var("CLOUDSCRAPER_BROWSERS_JSON")
+        && !custom.is_empty()
+    {
+        paths.push(PathBuf::from(custom));
     }
 
     if let Ok(current) = std::env::current_dir() {
@@ -408,6 +412,8 @@ pub enum UserAgentError {
         path: PathBuf,
         source: serde_json::Error,
     },
+    #[error("embedded user-agent dataset is invalid: {0}")]
+    InvalidEmbedded(serde_json::Error),
     #[error("I/O error reading {path:?}: {source}")]
     Io { path: PathBuf, source: io::Error },
     #[error("no user-agent data sources found")]
@@ -425,10 +431,96 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_selection_returns_profile() {
-        if let Ok(manager) = USER_AGENT_MANAGER.as_ref() {
-            let profile = manager.select_profile(UserAgentOptions::default()).unwrap();
-            assert!(profile.headers.contains_key("User-Agent"));
+    fn embedded_dataset_is_valid_json() {
+        // The dataset compiled into the binary must always parse, otherwise the
+        // crate cannot work as a dependency (regression guard for issue #6).
+        parse_dataset(EMBEDDED_BROWSERS_JSON).expect("embedded browsers.json must be valid");
+    }
+
+    #[test]
+    fn manager_loads_without_on_disk_file() {
+        // No reliance on filesystem layout: loading must succeed from the
+        // embedded fallback alone.
+        let manager = USER_AGENT_MANAGER
+            .as_ref()
+            .expect("user-agent manager should load from the embedded dataset");
+        let profile = manager.select_profile(UserAgentOptions::default()).unwrap();
+        assert!(profile.headers.contains_key("User-Agent"));
+    }
+
+    #[test]
+    fn both_devices_disabled_is_invalid() {
+        let opts = UserAgentOptions {
+            desktop: false,
+            mobile: false,
+            ..Default::default()
+        };
+        assert!(matches!(
+            get_user_agent_profile(opts),
+            Err(UserAgentError::InvalidOptions(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_platform_is_rejected() {
+        let opts = UserAgentOptions {
+            platform: Some("mars".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            get_user_agent_profile(opts),
+            Err(UserAgentError::InvalidOptions(_))
+        ));
+    }
+
+    #[test]
+    fn custom_user_agent_is_returned_verbatim() {
+        let opts = UserAgentOptions {
+            custom: Some("CustomUA/9.9".into()),
+            ..Default::default()
+        };
+        let profile = get_user_agent_profile(opts).unwrap();
+        assert_eq!(profile.headers.get("User-Agent").unwrap(), "CustomUA/9.9");
+        assert!(!profile.cipher_suites.is_empty());
+    }
+
+    #[test]
+    fn default_profile_has_all_core_headers() {
+        let profile = get_user_agent_profile(UserAgentOptions::default()).unwrap();
+        for header in ["User-Agent", "Accept", "Accept-Language", "Accept-Encoding"] {
+            assert!(profile.headers.contains_key(header), "missing {header}");
         }
+    }
+
+    #[test]
+    fn brotli_is_stripped_by_default() {
+        let profile = get_user_agent_profile(UserAgentOptions::default()).unwrap();
+        let encoding = profile
+            .headers
+            .get("Accept-Encoding")
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !encoding
+                .split(',')
+                .any(|e| e.trim().eq_ignore_ascii_case("br")),
+            "brotli should be stripped: {encoding}"
+        );
+    }
+
+    #[test]
+    fn strip_brotli_removes_only_br_token() {
+        let mut map = HashMap::new();
+        map.insert(
+            "Accept-Encoding".to_string(),
+            "gzip, br, deflate".to_string(),
+        );
+        strip_brotli(&mut map);
+        assert_eq!(map.get("Accept-Encoding").unwrap(), "gzip, deflate");
+    }
+
+    #[test]
+    fn default_cipher_suites_are_present() {
+        assert!(!default_cipher_suites().is_empty());
     }
 }

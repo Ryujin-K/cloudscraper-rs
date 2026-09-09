@@ -16,6 +16,11 @@ pub enum ChallengeType {
     JavaScriptV1,
     JavaScriptV2,
     ManagedV3,
+    /// Modern managed/interactive challenge served via
+    /// `orchestrate/chl_page/v1` (no legacy `challenge-form`). Solving it
+    /// requires executing Cloudflare's browser VM, i.e. the headless-browser
+    /// fallback rather than the in-process JS interpreter.
+    ManagedInteractive,
     Turnstile,
     RateLimit,
     AccessDenied,
@@ -124,6 +129,18 @@ static KNOWN_PATTERNS: Lazy<Vec<ChallengePattern>> = Lazy::new(|| {
                 r"window\._cf_chl_ctx\s*=",
                 r#"data-ray="[A-Fa-f0-9]+""#,
                 r#"<div[^>]*class="cf-browser-verification"#,
+            ],
+        ),
+        ChallengePattern::new(
+            "cf_managed_chl_page",
+            "Cloudflare Managed Challenge (chl_page/interactive)",
+            ChallengeType::ManagedInteractive,
+            ResponseStrategy::BrowserSimulation,
+            0.93,
+            &[
+                r"window\._cf_chl_opt\s*=",
+                r#"/cdn-cgi/challenge-platform/[^'"]*orchestrate/(?:chl_page|managed|captcha|jsch)/v1"#,
+                r#"cType\s*:\s*['"](?:managed|interactive)['"]"#,
             ],
         ),
         ChallengePattern::new(
@@ -370,7 +387,18 @@ impl ChallengeDetector {
     }
 
     fn is_cloudflare_challenge(&self, response: &ChallengeResponse<'_>) -> bool {
-        is_cloudflare_response(response) && matches!(response.status, 403 | 429 | 503)
+        if !is_cloudflare_response(response) {
+            return false;
+        }
+
+        // The usual challenge status codes, plus an explicit `cf-mitigated:
+        // challenge` header which modern flows can emit on other statuses.
+        matches!(response.status, 403 | 429 | 503)
+            || response
+                .headers
+                .get("cf-mitigated")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.eq_ignore_ascii_case("challenge"))
     }
 
     fn record_detection(&mut self, detection: ChallengeDetection) {
@@ -474,6 +502,57 @@ mod tests {
                 request_method: &self.method,
             }
         }
+    }
+
+    /// Trimmed reproduction of the modern managed flow reported in issue #3
+    /// (fanfiction.net "Just a moment...", `orchestrate/chl_page/v1`, no form).
+    const CHL_PAGE_BODY: &str = r#"
+        <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head>
+        <body><div class="main-wrapper" role="main"></div>
+        <script>(function(){window._cf_chl_opt = {cvId: '3',cZone: 'www.fanfiction.net',cType: 'managed',cRay: '9d50f6009b10697f'};
+        var a = document.createElement('script');
+        a.src = '/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1?ray=9d50f6009b10697f';
+        document.getElementsByTagName('head')[0].appendChild(a);}());</script></body></html>
+    "#;
+
+    #[test]
+    fn detects_managed_chl_page_as_interactive() {
+        let mut detector = ChallengeDetector::new();
+        let fixture = ResponseFixture::new(CHL_PAGE_BODY, 403);
+        let response = fixture.response();
+
+        let detection = detector
+            .detect(&response)
+            .expect("modern chl_page challenge should be detected");
+
+        assert_eq!(detection.challenge_type, ChallengeType::ManagedInteractive);
+        assert_eq!(detection.pattern_id, "cf_managed_chl_page");
+        assert_eq!(
+            detection.response_strategy,
+            ResponseStrategy::BrowserSimulation
+        );
+    }
+
+    #[test]
+    fn detects_via_cf_ray_header_without_server_header() {
+        // No `Server: cloudflare`, but a `cf-ray` header — still Cloudflare.
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-ray", "9d50f6009b10697f".parse().unwrap());
+        let url = Url::parse("https://example.com/").unwrap();
+        let method = Method::GET;
+        let response = ChallengeResponse {
+            url: &url,
+            status: 403,
+            headers: &headers,
+            body: CHL_PAGE_BODY,
+            request_method: &method,
+        };
+
+        let mut detector = ChallengeDetector::new();
+        let detection = detector
+            .detect(&response)
+            .expect("should detect via cf-ray");
+        assert_eq!(detection.challenge_type, ChallengeType::ManagedInteractive);
     }
 
     #[test]

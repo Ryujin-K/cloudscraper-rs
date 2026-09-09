@@ -2,6 +2,11 @@
 /target/
 **/*.rs.bk
 
+# Coverage artifacts
+/cobertura.xml
+/lcov.info
+*.profraw
+
 # Tooling and editor state
 .vscode/
 .idea/

@@ -274,6 +274,16 @@ impl ChallengePipeline {
                     },
                 }
             }
+            ChallengeType::ManagedInteractive => {
+                // Recognised, but the modern interactive flow requires executing
+                // Cloudflare's browser VM. Surface a precise, actionable result
+                // instead of silently returning the raw 403 (issues #2/#3); the
+                // headless-browser fallback will handle this challenge type.
+                unsupported(
+                    detection_for_branch,
+                    UnsupportedReason::MissingDependency("browser_fallback"),
+                )
+            }
             ChallengeType::Turnstile => {
                 let Some(solver) = self.turnstile.as_ref() else {
                     return unsupported(
@@ -373,4 +383,154 @@ fn unsupported(
     reason: UnsupportedReason,
 ) -> ChallengePipelineResult {
     ChallengePipelineResult::Unsupported { detection, reason }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::challenges::core::ChallengeResponse;
+    use http::{HeaderMap, Method, header::SERVER};
+    use url::Url;
+
+    struct Fixture {
+        url: Url,
+        headers: HeaderMap,
+        method: Method,
+        body: String,
+        status: u16,
+    }
+
+    impl Fixture {
+        fn cloudflare(body: &str, status: u16) -> Self {
+            let mut headers = HeaderMap::new();
+            headers.insert(SERVER, "cloudflare".parse().unwrap());
+            Self {
+                url: Url::parse("https://example.com/").unwrap(),
+                headers,
+                method: Method::GET,
+                body: body.to_string(),
+                status,
+            }
+        }
+
+        fn plain(body: &str, status: u16) -> Self {
+            Self {
+                url: Url::parse("https://example.com/").unwrap(),
+                headers: HeaderMap::new(),
+                method: Method::GET,
+                body: body.to_string(),
+                status,
+            }
+        }
+
+        fn response(&self) -> ChallengeResponse<'_> {
+            ChallengeResponse {
+                url: &self.url,
+                status: self.status,
+                headers: &self.headers,
+                body: &self.body,
+                request_method: &self.method,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn plain_response_is_no_challenge() {
+        let mut pipeline = ChallengePipeline::default();
+        let fixture = Fixture::plain("<html>ok</html>", 200);
+        let result = pipeline
+            .evaluate(&fixture.response(), PipelineContext::default())
+            .await;
+        assert!(matches!(result, ChallengePipelineResult::NoChallenge));
+    }
+
+    #[tokio::test]
+    async fn detected_challenge_without_solver_is_unsupported() {
+        let mut pipeline = ChallengePipeline::default(); // no solvers attached
+        let body = r#"<div class="cf-turnstile" data-sitekey="0123456789ABCDEFGHIJ0123456789ABCDEFGHIJ"></div>
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>cf-turnstile-response"#;
+        let fixture = Fixture::cloudflare(body, 403);
+        let result = pipeline
+            .evaluate(&fixture.response(), PipelineContext::default())
+            .await;
+        match result {
+            ChallengePipelineResult::Unsupported { reason, .. } => {
+                assert_eq!(reason, UnsupportedReason::MissingSolver("turnstile"));
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_interactive_requests_browser_fallback() {
+        let mut pipeline = ChallengePipeline::default();
+        let body = "window._cf_chl_opt = {cType:'managed'}; \
+            /cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1";
+        let fixture = Fixture::cloudflare(body, 403);
+        let result = pipeline
+            .evaluate(&fixture.response(), PipelineContext::default())
+            .await;
+        match result {
+            ChallengePipelineResult::Unsupported { reason, .. } => {
+                assert_eq!(
+                    reason,
+                    UnsupportedReason::MissingDependency("browser_fallback")
+                );
+            }
+            other => panic!("expected browser_fallback Unsupported, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limit_yields_mitigation() {
+        let mut pipeline = ChallengePipeline::default().with_rate_limit(RateLimitHandler::new());
+        let body = r#"<span class="cf-error-code">1015</span> You are being rate limited"#;
+        let fixture = Fixture::cloudflare(body, 429);
+        let result = pipeline
+            .evaluate(&fixture.response(), PipelineContext::default())
+            .await;
+        assert!(matches!(result, ChallengePipelineResult::Mitigation { .. }));
+    }
+
+    #[tokio::test]
+    async fn access_denied_yields_mitigation() {
+        let mut pipeline =
+            ChallengePipeline::default().with_access_denied(AccessDeniedHandler::new());
+        let body = r#"<span class="cf-error-code">1020</span> Access denied.
+            The owner of this website has banned your access"#;
+        let fixture = Fixture::cloudflare(body, 403);
+        let result = pipeline
+            .evaluate(&fixture.response(), PipelineContext::default())
+            .await;
+        assert!(matches!(result, ChallengePipelineResult::Mitigation { .. }));
+    }
+
+    #[test]
+    fn record_outcome_and_detector_accessors() {
+        let mut pipeline = ChallengePipeline::default();
+        pipeline.record_outcome("cf_turnstile", true);
+        let _ = pipeline.detector();
+        let _ = pipeline.detector_mut();
+        let replacement = ChallengeDetector::new();
+        pipeline.set_detector(replacement);
+    }
+
+    #[test]
+    fn unsupported_reason_display_messages() {
+        assert!(
+            UnsupportedReason::MissingSolver("x")
+                .to_string()
+                .contains('x')
+        );
+        assert!(
+            UnsupportedReason::MissingDependency("dep")
+                .to_string()
+                .contains("dep")
+        );
+        assert!(
+            UnsupportedReason::UnknownChallenge
+                .to_string()
+                .contains("unrecognised")
+        );
+    }
 }

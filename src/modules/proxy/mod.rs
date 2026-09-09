@@ -332,4 +332,89 @@ mod tests {
         let report = manager.health_report();
         assert_eq!(report.banned_proxies, 1);
     }
+
+    #[test]
+    fn empty_pool_returns_none() {
+        let mut manager = ProxyManager::default();
+        assert!(manager.next_proxy().is_none());
+        assert_eq!(manager.health_report().total_proxies, 0);
+    }
+
+    #[test]
+    fn add_proxy_dedupes_and_remove_works() {
+        let mut manager = ProxyManager::default();
+        manager.add_proxy("http://a");
+        manager.add_proxy("http://a");
+        assert_eq!(manager.health_report().total_proxies, 1);
+        manager.remove_proxy("http://a");
+        assert_eq!(manager.health_report().total_proxies, 0);
+    }
+
+    #[test]
+    fn every_rotation_strategy_returns_an_available_proxy() {
+        for strategy in [
+            RotationStrategy::Sequential,
+            RotationStrategy::Random,
+            RotationStrategy::Smart,
+            RotationStrategy::Weighted,
+            RotationStrategy::RoundRobinSmart,
+        ] {
+            let mut manager = ProxyManager::new(ProxyConfig {
+                rotation_strategy: strategy,
+                ..Default::default()
+            });
+            manager.load(["http://1", "http://2", "http://3"]);
+            let picked = manager.next_proxy().unwrap();
+            assert!(picked.starts_with("http://"), "strategy {strategy:?}");
+        }
+    }
+
+    #[test]
+    fn report_success_clears_ban_and_smart_picks_healthy() {
+        let mut manager = ProxyManager::new(ProxyConfig {
+            rotation_strategy: RotationStrategy::Smart,
+            failure_threshold: 1,
+            ban_time: Duration::from_secs(300),
+            ..Default::default()
+        });
+        manager.load(["http://good", "http://bad"]);
+        manager.report_failure("http://bad");
+        manager.report_success("http://good");
+        assert_eq!(manager.health_report().banned_proxies, 1);
+        assert_eq!(manager.next_proxy().unwrap(), "http://good");
+    }
+
+    #[test]
+    fn all_banned_recovers_by_unbanning_soonest() {
+        let mut manager = ProxyManager::new(ProxyConfig {
+            failure_threshold: 1,
+            ban_time: Duration::from_secs(300),
+            ..Default::default()
+        });
+        manager.load(["http://a", "http://b"]);
+        manager.report_failure("http://a");
+        manager.report_failure("http://b");
+        assert_eq!(manager.health_report().banned_proxies, 2);
+        assert!(manager.next_proxy().is_some());
+    }
+
+    #[test]
+    fn proxy_pool_trait_delegates() {
+        let mut manager = ProxyManager::default();
+        manager.load(["http://x"]);
+        assert_eq!(
+            ProxyPool::next_proxy(&mut manager).as_deref(),
+            Some("http://x")
+        );
+        ProxyPool::report_failure(&mut manager, "http://x");
+        assert_eq!(
+            manager
+                .health_report()
+                .details
+                .get("http://x")
+                .unwrap()
+                .failures,
+            1
+        );
+    }
 }
